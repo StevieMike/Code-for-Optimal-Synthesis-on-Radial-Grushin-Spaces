@@ -1,0 +1,362 @@
+(* Reproducible Figures 3 and 4 for "Optimal Synthesis on a Radially Symmetric Grushin Space".
+Normalization: alpha = 2, q0 = (1,0,0), 2E = 1.
+Copy and paste the contents of this file in Wolfram Language / Mathematica. 
+Uncomment the line at the bottom and it exports two vector PDFs and PNGs 
+No external packages needed.
+
+   Figure 3: unit-shell parameter region in (kappa,s).
+   Figure 4: unwrapped cylinder (theta,z) with a broken height scale, the tongue,
+             inward/outward first-return families at theta = thetaSample, and both
+             intersections with the full-period boundary.
+*)
+
+ClearAll[alpha, sCrit, kappaCrit, omegaCrit, zCircular, kappaFromS,
+  aOf, bOf, turningRadii, uPhi, denPhi, timeIntegral, angleIntegral,
+  pFull, omegaFull, zLow, zUp, kappaAtAngle, phaseAtAngle,
+  firstReturnHeight, firstReturnData, thetaSample, kappaTheta,
+  kappaInSample, kappaOutSample, zInSample, zOutSample,
+  zBoundaryLow, zBoundaryUp, pZero, zSpine, kappaGrid, tongueData,
+  lowerPoints, upperPoints, upperPointsLow, upperPointsHigh,
+  blue, orange, green, paleBlue, paleOrange, paleGreen, purple,
+  figureParameter, figureReturns, outputDir,mathLabel];
+
+
+mathLabel[expr_, size_: 20] :=
+  Style[
+    TraditionalForm[expr],
+    FontSize -> size,
+    Black
+  ];
+alpha = 2;
+sCrit = N[(alpha + 1)^(-1/(2 alpha))];
+kappaCrit = N[Sqrt[alpha] (alpha + 1)^(-(alpha + 1)/(2 alpha))];
+omegaCrit = N[2 Pi/Sqrt[2 (alpha + 1)]];
+zCircular = N[2 Pi/Sqrt[2 alpha (alpha + 1)]];
+pZero = N[Beta[1/(2 alpha), 1/2]/alpha];
+zSpine = pZero/(alpha + 1);
+
+(* Q_kappa(s) >= 0 iff kappa <= s Sqrt[1-s^(2 alpha)], 0 < s <= 1.
+   The upper and lower boundaries meet at (kappaCrit,sCrit). *)
+kappaFromS[s_?NumericQ] := s Sqrt[Max[0., 1. - s^(2 alpha)]];
+
+blue = RGBColor[0.10, 0.39, 0.68];
+orange = RGBColor[0.94, 0.39, 0.06];
+green = RGBColor[0.13, 0.60, 0.25];
+paleBlue = RGBColor[0.85, 0.93, 1.00];
+paleOrange = RGBColor[1.00, 0.90, 0.79];
+paleGreen = RGBColor[0.87, 0.96, 0.86];
+purple = RGBColor[0.47, 0.24, 0.65];
+
+(* ===== FIGURE 3: parameter domain ===== *)
+Module[{sValues, boundary, lower, upper},
+  sValues = N[Subdivide[0, 1, 360]];
+  boundary = ({kappaFromS[#], #} & /@ sValues);
+  lower = Select[boundary, #[[2]] <= sCrit &];
+  upper = Select[boundary, #[[2]] >= sCrit &];
+  lower = Append[lower, {kappaCrit, sCrit}];
+  upper = Prepend[upper, {kappaCrit, sCrit}];
+  figureParameter = Graphics[
+    {
+      {paleBlue, EdgeForm[None], Polygon[Join[{{0., 0.}}, boundary, {{0., 1.}}]]},
+      {Directive[blue, Thick], Line[lower]},
+      {Directive[orange, Thick], Line[upper]},
+      {Directive[green, Thick], Line[{{0, 0}, {0, 1}}]},
+      {Directive[orange, PointSize[0.016]], Point[{kappaCrit, sCrit}]},
+      {Directive[Black, Thin], Arrowheads[.025],Arrow[{{0.34, 1.045}, {kappaFromS[0.985], 0.985}}]},
+      {Directive[Black, Thin], Arrowheads[.025],Arrow[{{0.13, 0.16}, {kappaFromS[0.235], 0.235}}]},
+      Text[Style["L = 0:  s = b(\[Kappa])", 12], {0.28, 1.078}],
+      Text[Style["L = 0:  s = a(\[Kappa])", 12], {0.14, 0.13}],
+      Text[Style["L \[NotEqual] 0", 14], {0.37, 0.63}],
+      Text[Style["\[Kappa] = 0", 11], {0.06, 0.69}],
+      Text[Style["circular tip", 11], {0.535, 0.835}],
+      {Directive[Black, Thin],Arrowheads[.025], Arrow[{{0.564, 0.81}, {kappaCrit, sCrit}}]}
+    },
+    PlotRange -> {{-0.018, kappaCrit + 0.07}, {-0.032, 1.12}},
+    PlotRangeClipping -> False,
+    Frame -> True, Axes -> False,
+    FrameLabel -> {Style["\[Kappa]", 15], Style["s", 15]},
+    PlotLabel -> Style["Unit-shell parameter region for \[Alpha] = 2", 14],
+    BaseStyle -> {FontFamily -> "Times", FontSize -> 12},
+    ImagePadding -> {{62, 25}, {50, 42}}, ImageSize -> 690
+  ];
+];
+
+(* ===== NUMERICS FOR FIGURE 4 =====
+   For alpha = 2 and Q(u) = 1-kappa^2/u^2-u^4, the turning radii a<b obey
+       Q(u) = (u^2-a^2)(b^2-u^2)(u^2+a^2+b^2)/u^2.
+   With u = a + (b-a) Sin[t]^2, the square-root endpoint singularities cancel.
+   The following integrands are smooth on 0 <= t <= Pi/2 for 0 < kappa < kappaCrit.
+   Bisection is used for the turning radii, angular inversion, and return phase.
+*)
+
+aOf[k_?NumericQ] := aOf[k] = Module[{lo = 0., hi = sCrit, mid},
+  If[k <= 0, Return[0.]];
+  If[k >= kappaCrit, Return[sCrit]];
+  Do[mid = (lo + hi)/2.; If[kappaFromS[mid] < k, lo = mid, hi = mid], {62}];
+  (lo + hi)/2.
+];
+bOf[k_?NumericQ] := bOf[k] = Module[{lo = sCrit, hi = 1., mid},
+  If[k <= 0, Return[1.]];
+  If[k >= kappaCrit, Return[sCrit]];
+  Do[mid = (lo + hi)/2.; If[kappaFromS[mid] > k, lo = mid, hi = mid], {62}];
+  (lo + hi)/2.
+];
+turningRadii[k_?NumericQ] := turningRadii[k] = {aOf[k], bOf[k]};
+
+uPhi[k_?NumericQ, t_?NumericQ] := Module[{ab = turningRadii[k]},
+  ab[[1]] + (ab[[2]] - ab[[1]]) Sin[t]^2
+];
+denPhi[k_?NumericQ, t_?NumericQ] := Module[{ab = turningRadii[k], u},
+  u = uPhi[k, t];
+  Sqrt[(u + ab[[1]]) (u + ab[[2]]) (u^2 + ab[[1]]^2 + ab[[2]]^2)]
+];
+(* timeIntegral = 2 Integral[du / Sqrt[Q]], angleIntegral = 2 kappa Integral[du/(u^2 Sqrt[Q])]. *)
+timeIntegral[k_?NumericQ, t0_?NumericQ, t1_?NumericQ] := NIntegrate[
+  4 uPhi[k, t]/denPhi[k, t], {t, t0, t1},
+  AccuracyGoal -> 9, PrecisionGoal -> 9, MaxRecursion -> 12
+];
+angleIntegral[k_?NumericQ, t0_?NumericQ, t1_?NumericQ] := NIntegrate[
+  4 k/(uPhi[k, t] denPhi[k, t]), {t, t0, t1},
+  AccuracyGoal -> 9, PrecisionGoal -> 9, MaxRecursion -> 12
+];
+
+pFull[k_?NumericQ] := pFull[k] = Which[
+  k <= 0, pZero,
+  k >= kappaCrit, N[sCrit 2 Pi/Sqrt[2 alpha]],
+  True, timeIntegral[k, 0., N[Pi/2]]
+];
+omegaFull[k_?NumericQ] := omegaFull[k] = Which[
+  k <= 0, N[Pi],
+  k >= kappaCrit, omegaCrit,
+  True, angleIntegral[k, 0., N[Pi/2]]
+];
+zLow[k_?NumericQ] := Which[
+  k <= 0, zSpine,
+  k >= kappaCrit, zCircular,
+  True, pFull[k]/((alpha + 1) bOf[k]^(alpha + 1))
+];
+zUp[k_?NumericQ] := Which[
+  k <= 0, Infinity,
+  k >= kappaCrit, zCircular,
+  True, pFull[k]/((alpha + 1) aOf[k]^(alpha + 1))
+];
+
+(* Use an angle near Pi to make the high/low split legible, as in the manuscript. *)
+thetaSample = 3.05;
+kappaAtAngle[angle_?NumericQ] := Module[{lo = 0., hi = kappaCrit, mid},
+  Do[mid = (lo + hi)/2.;
+     If[omegaFull[mid] > angle, lo = mid, hi = mid], {43}];
+  (lo + hi)/2.
+];
+kappaTheta = kappaAtAngle[thetaSample];
+zBoundaryLow = zLow[kappaTheta];
+zBoundaryUp = zUp[kappaTheta];
+
+(* For fixed theta, the two premature-return families project to vertical height
+   curves in the (theta,z) unwrapping. Their boundary intersections are reached
+   as kappa increases to kappaTheta. We mark one genuine interior return on each. *)
+phaseAtAngle[k_?NumericQ, target_?NumericQ] := Module[
+  {lo = 0., hi = N[Pi/2], mid},
+  Do[mid = (lo + hi)/2.;
+     If[angleIntegral[k, 0., mid] < target, lo = mid, hi = mid], {38}];
+  (lo + hi)/2.
+];
+firstReturnData[k_?NumericQ, branch_String] := Module[
+  {phase, rad, radialL, tau, target, height},
+  target = If[branch === "in", thetaSample, omegaFull[k] - thetaSample];
+  phase = phaseAtAngle[k, target];
+  rad = uPhi[k, phase];
+  radialL = Sqrt[Max[0., 1 - k^2/rad^2 - rad^(2 alpha)]];
+  tau = If[branch === "in",
+    timeIntegral[k, 0., phase]/rad,
+    timeIntegral[k, phase, N[Pi/2]]/rad
+  ];
+  height = (tau + If[branch === "in", -2 radialL, 2 radialL])/
+    ((alpha + 1) rad^alpha);
+  {height, rad, tau}
+];
+firstReturnHeight[k_?NumericQ, branch_String] := firstReturnData[k, branch][[1]];
+kappaInSample = 0.70 kappaTheta;
+kappaOutSample = 0.99 kappaTheta;
+zInSample = firstReturnHeight[kappaInSample, "in"];
+zOutSample = firstReturnHeight[kappaOutSample, "out"];
+
+Print["alpha = ", alpha, ", q0 = (1,0,0)"];
+Print["circular tip (kappa_c,s_c) = ", N[{kappaCrit, sCrit}, 8]];
+Print["theta* = ", thetaSample, ", kappa_theta = ", N[kappaTheta, 8]];
+Print["tongue intersections: z_low = ", N[zBoundaryLow, 8],
+      ", z_up = ", N[zBoundaryUp, 8]];
+Print["sample interior heights: Z_in = ", N[zInSample, 8],
+      ", Z_out = ", N[zOutSample, 8]];
+If[!(0 < zInSample < zBoundaryLow < zBoundaryUp < zOutSample),
+  Print["WARNING: first-return separation check failed."]
+];
+
+(* Sample the full-period boundary in kappa, ordering the results by increasing theta.
+   The kappa=0 upper endpoint is at +Infinity and is represented by the spine,
+   not passed to Graphics as a finite point. *)
+kappaGrid = N[Subdivide[kappaCrit (1 - 10^-5), 0.02, 250]];
+tongueData = Join[
+  {{omegaCrit, zCircular, zCircular}},
+  Table[{omegaFull[k], zLow[k], zUp[k]}, {k, kappaGrid}]
+];
+lowerPoints = Append[({#[[1]], #[[2]]} & /@ tongueData), {N[Pi], zSpine}];
+upperPoints = ({#[[1]], #[[3]]} & /@ tongueData);
+
+(* Figure 4 is drawn as ONE Graphics object with two explicit height windows.
+   This avoids front-end dependent sizing/clipping in GraphicsColumn.  The height
+   transformation changes only the DISPLAY coordinate; all numerical z values
+   and all endpoint formulas above are unchanged. *)
+   (* Cut locus *)
+labelTongue =
+  mathLabel[Subscript[\[ScriptCapitalC], "++"], 24];
+
+(* Boundary curves *)
+labelLow =
+  mathLabel[Subscript["z", "low"], 22];
+
+labelUp =
+  mathLabel[Subscript["z", "up"], 22];
+
+(* Premature return heights *)
+labelMinus =
+  mathLabel[Subscript["Z", "-"], 22];
+
+labelPlus =
+  mathLabel[Subscript["Z", "+"], 22];
+
+(* Distinguished points *)
+labelCircular =
+  mathLabel[Subsuperscript["q", "c", "+"], 22];
+
+labelSpine =
+  mathLabel[\[ScriptCapitalS], 22];
+
+(* Angular coordinates *)
+labelTheta =
+  mathLabel[Subscript[\[Theta], "*"], 20];
+
+labelOmega =
+  mathLabel[Subscript[\[Omega], "c"], 20];
+Module[{xLeft, xRight, zLowMin, zLowMax, zHighMin, zHighMax,
+        lowY, highY, lowerXY, upperLowXY, upperHighXY, upperCrossingAngle,
+        lowFill, lowTongue, lowAbove, highTongue, lowTicks, highTicks,
+        xTicks, yBottom, yLowTop, yHighBottom, yTop},
+  xLeft = omegaCrit - 0.044;
+  xRight = N[Pi] + 0.052;
+  zLowMin = 0.; zLowMax = 2.20;
+  zHighMin = 1450.; zHighMax = 2350.;
+  yBottom = 0.; yLowTop = 1.; yHighBottom = 1.15; yTop = 2.15;
+  lowY[z_?NumericQ] := yBottom + (z-zLowMin)/(zLowMax-zLowMin) (yLowTop-yBottom);
+  highY[z_?NumericQ] := yHighBottom + (z-zHighMin)/(zHighMax-zHighMin) (yTop-yHighBottom);
+
+  lowerXY = ({#[[1]], lowY[#[[2]]]} & /@ lowerPoints);
+  upperLowXY = Append[
+    ({#[[1]], lowY[Clip[#[[2]], {zLowMin,zLowMax}]]} & /@ upperPoints),
+    {N[Pi], yLowTop}
+  ];
+  (* Interpolate the actual upper boundary at both ends of the upper window.
+     This avoids truncating the curve at the first/last sampled point, and
+     does not introduce an artificial vertical boundary at thetaSample. *)
+  upperCrossingAngle[z_?NumericQ] := Module[{pair},
+    pair = First[Select[Partition[upperPoints, 2, 1],
+      #[[1, 2]] <= z <= #[[2, 2]] &]];
+    pair[[1, 1]] + (z - pair[[1, 2]])
+      (pair[[2, 1]] - pair[[1, 1]])/(pair[[2, 2]] - pair[[1, 2]])
+  ];
+  upperHighXY = Join[
+    {{upperCrossingAngle[zHighMin], yHighBottom}},
+    ({#[[1]], highY[#[[2]]]} & /@
+      Select[upperPoints, zHighMin < #[[2]] < zHighMax &]),
+    {{upperCrossingAngle[zHighMax], yTop}}
+  ];
+  lowFill = Polygon[Join[{{omegaCrit, yBottom}}, lowerXY, {{N[Pi], yBottom}}]];
+  lowAbove = Polygon[Join[upperLowXY, {{omegaCrit, yLowTop}}]];
+  highTongue = Polygon[Join[upperHighXY,
+    {{N[Pi], yTop}, {N[Pi], yHighBottom}}]];
+
+  lowTicks = ({lowY[#], NumberForm[#, {3, 2}]} & /@ {0., 0.5, 1., 1.5, 2.});
+  highTicks = ({highY[#], ToString[Round[#]]} & /@ {1500., 1750., 2000., 2250.});
+ xTicks = {
+  {omegaCrit, labelOmega},
+  {thetaSample, labelTheta},
+  {N[Pi], mathLabel[\[Pi], 20]}
+};
+
+  figureReturns = Graphics[
+    {
+      (* LOWER WINDOW: zero <= z <= 2.20. *)
+      {paleGreen, EdgeForm[None], Rectangle[{omegaCrit, yBottom}, {N[Pi], yLowTop}]},
+      {paleBlue, EdgeForm[None], lowFill},
+      {paleOrange, EdgeForm[None], lowAbove},
+      {Directive[blue, Thick], Line[lowerXY]},
+      {Directive[orange, Thick],
+       Line[Select[upperLowXY, #[[2]] < yLowTop - 10^-7 &]]},
+      {Directive[purple, Thick], Line[{{N[Pi], lowY[zSpine]}, {N[Pi], yLowTop}}]},
+      {Directive[GrayLevel[0.27], Dashed],
+       Line[{{thetaSample, yBottom}, {thetaSample, yLowTop}}]},
+      {Directive[blue, Thick],
+       Line[{{thetaSample, yBottom}, {thetaSample, lowY[zBoundaryLow]}}]},
+      {Directive[Black, PointSize[0.013]], Point[{thetaSample, lowY[zBoundaryLow]}]},
+      {Directive[blue, PointSize[0.016]], Point[{thetaSample, lowY[zInSample]}]},
+      {Directive[purple, PointSize[0.016]], Point[{omegaCrit, lowY[zCircular]}]},
+      Inset[labelCircular,{2.69,.03+lowY[1.97]}],
+      {Directive[Black, Thin],Arrowheads[.025],
+       Arrow[{{2.66, lowY[1.95]}, {omegaCrit, lowY[zCircular]}}]},
+       Inset[labelTongue, {2.80, lowY[1.50]}],
+      Text[Style["below the tongue", 16], {2.79, lowY[0.30]}],
+      Inset[labelMinus, {2.96, 0.25}],
+      {Directive[Black, Thin],Arrowheads[.025],
+       Arrow[{{2.97, lowY[0.61]}, {thetaSample, lowY[zInSample]}}]},
+      Inset[labelLow, {2.95, 0.5}],
+      {Directive[Black, Thin],Arrowheads[.025],
+       Arrow[{{2.97, lowY[1.02]}, {thetaSample, lowY[zBoundaryLow]}}]},
+
+      (* UPPER WINDOW: 1450 <= z <= 2350. *)
+      {paleOrange, EdgeForm[None],
+       Rectangle[{omegaCrit, yHighBottom}, {N[Pi], yTop}]},
+      {paleGreen, EdgeForm[None], highTongue},
+      {Directive[orange, Thick], Line[upperHighXY]},
+      {Directive[purple, Thick], Line[{{N[Pi], yHighBottom}, {N[Pi], yTop}}]},
+      {Directive[GrayLevel[0.27], Dashed],
+       Line[{{thetaSample, yHighBottom}, {thetaSample, yTop}}]},
+      {Directive[Black, PointSize[0.013]], Point[{thetaSample, highY[zBoundaryUp]}]},
+      {Directive[orange, PointSize[0.016]], Point[{thetaSample, highY[zOutSample]}]},
+      Text[Style["above the tongue", 16], {2.79, highY[1750]}],
+      Inset[labelPlus,{2.93,.1+highY[zOutSample]}],
+      {Arrowheads[.025],Directive[Black, Thin],
+       Arrow[{{2.94, highY[2070]}, {thetaSample-.005, highY[zOutSample]}}]},
+       Inset[labelUp, {2.95, highY[1860]}],
+      {Directive[Black, Thin],Arrowheads[.025],
+       Arrow[{{2.96, highY[1880]}, {thetaSample, highY[zBoundaryUp]}}]},
+
+      (* Thin panel borders and two slash marks make the omitted scale explicit. *)
+      {Directive[GrayLevel[0.65], Thin],
+       Line[{{xLeft, yLowTop}, {xRight, yLowTop}}],
+       Line[{{xLeft, yHighBottom}, {xRight, yHighBottom}}]},
+      {Directive[Black, AbsoluteThickness[1.2]],
+       Line[{{xLeft - 0.006, 1.045}, {xLeft + 0.007, 1.085}}],
+       Line[{{xRight - 0.007, 1.045}, {xRight + 0.006, 1.085}}]}
+    },
+    PlotRange -> {{xLeft - 0.012, xRight + 0.012}, {-0.04, yTop + 0.04}},
+    PlotRangeClipping -> False, PlotRangePadding -> None,
+    Frame -> True, Axes -> False,
+    FrameTicks -> {{Join[lowTicks, highTicks], None}, {xTicks, None}},
+    FrameLabel -> {Style["\[Theta]", 20], Style["z (split scale)", 20]},
+    PlotLabel -> Style["Unwrapped return cylinder for \[Alpha] = 2", 14],
+    BaseStyle -> {FontFamily -> "Times", FontSize -> 11},
+    ImagePadding -> {{72, 25}, {48, 40}}, ImageSize -> {760, 575},
+    AspectRatio -> 0.72
+  ];
+];
+
+(* Exports are vector PDFs plus quick-look PNGs. These are the only output files. *)
+(*outputDir = FileNameJoin[{Directory[], "figures"}];
+If[!DirectoryQ[outputDir], CreateDirectory[outputDir, CreateIntermediateDirectories -> True]];
+Export[FileNameJoin[{outputDir, "figure_A_parameter_region.pdf"}], figureParameter, "PDF"];
+Export[FileNameJoin[{outputDir, "figure_A_parameter_region.png"}], figureParameter, "PNG", ImageResolution -> 220];
+Export[FileNameJoin[{outputDir, "figure_B_unwrapped_tongue.pdf"}], figureReturns, "PDF"];
+Export[FileNameJoin[{outputDir, "figure_B_unwrapped_tongue.png"}], figureReturns, "PNG", ImageResolution -> 220];
+Print["Exported both figures to: ", outputDir];*)
+figureParameter
+figureReturns
