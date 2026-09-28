@@ -1,0 +1,167 @@
+(* ================================================================*)
+(*Premature conjugacy for f(r)=r Exp[-1/r^2]*)(*q0=(1,0,0),H=1/2*)
+(* ================================================================*)
+
+wp = 50;
+
+(*Exact parameter choices,converted only afterwards to high precision*)
+K0 = N[9/10, wp];
+qpar = N[4/5, wp];
+
+L0 = N[Sqrt[(1 - (9/10)^2) (1 - (4/5)^2)], wp];
+
+W0 = N[(4/5) Exp[1] Sqrt[1 - (9/10)^2], wp];
+
+Print["Initial covector (L,K,w) = ", N[{L0, K0, W0}, 16]];
+
+
+(* ================================================================*)(*1\
+. Radial period*)(* ================================================================*)
+wp = 50;
+guard = 30;
+wpRoot = wp + guard;
+
+(*Keep the defining parameters exact as long as possible*)
+Kexact = 9/10;
+qexact = 4/5;
+Wexact = qexact E Sqrt[1 - Kexact^2];
+
+radExact[r_] := 1 - Kexact^2/r^2 - Wexact^2 r^2 Exp[-2/r^2];
+
+(*Turning points computed with guard digits*)
+rminus = 
+  r /. FindRoot[radExact[r] == 0, {r, N[47/50, wpRoot]}, 
+    WorkingPrecision -> wpRoot, AccuracyGoal -> 60, 
+    PrecisionGoal -> 60];
+
+rplus = r /. 
+   FindRoot[radExact[r] == 0, {r, N[34/25, wpRoot]}, 
+    WorkingPrecision -> wpRoot, AccuracyGoal -> 60, 
+    PrecisionGoal -> 60];
+
+mid = (rminus + rplus)/2;
+half = (rplus - rminus)/2;
+
+P = 2 NIntegrate[
+    half Cos[phi]/Sqrt[radExact[mid + half Sin[phi]]], {phi, -Pi/2, 
+     Pi/2}, WorkingPrecision -> wp, AccuracyGoal -> 30, 
+    PrecisionGoal -> 30, MaxRecursion -> 30, 
+    Method -> {"GlobalAdaptive", "SymbolicProcessing" -> 0}];
+
+Print["r_- = ", N[rminus, 16]];
+Print["r_+ = ", N[rplus, 16]];
+Print["Radial period P = ", N[P, 16]];
+
+
+(* ================================================================*)
+(*2. Hamiltonian equations*)
+(* ================================================================*)
+
+stateEq = {x'[t] == u[t], y'[t] == v[t], 
+   z'[t] == ww[t] (x[t]^2 + y[t]^2) Exp[-2/(x[t]^2 + y[t]^2)], 
+   u'[t] == -ww[t]^2 x[
+      t] Exp[-2/(x[t]^2 + y[t]^2)] (1 + 2/(x[t]^2 + y[t]^2)), 
+   v'[t] == -ww[t]^2 y[
+      t] Exp[-2/(x[t]^2 + y[t]^2)] (1 + 2/(x[t]^2 + y[t]^2)), 
+   ww'[t] == 0};
+
+stateIC = {x[0] == 1, y[0] == 0, z[0] == 0, u[0] == L0, v[0] == K0, 
+   ww[0] == W0};
+
+
+(* ================================================================*)
+(*3. Linearized Hamiltonian system*)
+(* ================================================================*)
+
+jac[xv_, yv_, zv_, uv_, vv_, wv_] := 
+  Module[{r2, ef, g, a, ax, ay}, r2 = xv^2 + yv^2;
+   ef = Exp[-2/r2];
+   g = r2 ef;
+   a = ef (1 + 2/r2);
+   (*derivatives of a with respect to x and y*)ax = 8 ef xv/r2^3;
+   ay = 8 ef yv/r2^3;
+   {{0, 0, 0, 1, 0, 0}, {0, 0, 0, 0, 1, 0}, {2 wv a xv, 2 wv a yv, 0, 
+     0, 0, g}, {-wv^2 (a + xv ax), -wv^2 xv ay, 0, 0, 
+     0, -2 wv a xv}, {-wv^2 yv ax, -wv^2 (a + yv ay), 0, 0, 
+     0, -2 wv a yv}, {0, 0, 0, 0, 0, 0}}];
+
+
+(*Create 18 scalar sensitivity variables s11,...,s63*)
+sNames = 
+  Table[Symbol["s" <> ToString[i] <> ToString[j]], {i, 6}, {j, 3}];
+
+sMat[t_] := Map[#[t] &, sNames, {2}];
+
+Jmat[t_] := jac[x[t], y[t], z[t], u[t], v[t], ww[t]];
+
+sensEq = Thread[Flatten[D[sMat[t], t]] == Flatten[Jmat[t] . sMat[t]]];
+
+(*derivative with respect to initial (L,K,w)=(u0,v0,w0)*)
+S0 = Join[ConstantArray[0, {3, 3}], IdentityMatrix[3]];
+
+sensIC = Thread[Flatten[sMat[0]] == Flatten[S0]];
+
+
+(* ================================================================*)
+(*4. Solve state+variational equations*)
+(* ================================================================*)
+
+depVars = Join[{x, y, z, u, v, ww}, Flatten[sNames]];
+
+tmax = N[93/25, wp];
+
+sol = NDSolveValue[Join[stateEq, stateIC, sensEq, sensIC], 
+   depVars, {t, 0, tmax}, WorkingPrecision -> wp, AccuracyGoal -> 30, 
+   PrecisionGoal -> 30, MaxStepSize -> N[1/2000, wp], 
+   MaxSteps -> Infinity];
+
+
+(*The first six entries are the Hamiltonian variables.Entries 7,...,\
+24 are the sensitivity matrix.*)
+
+sSol = Partition[sol[[7 ;; 24]], 3];
+
+Snum[tt_?NumericQ] := Map[#[tt] &, sSol, {2}];
+
+(*endpoint differential d(x,y,z)/d(L,K,w)*)
+endpointJac[tt_?NumericQ] := Snum[tt][[1 ;; 3, All]];
+
+detEnd[tt_?NumericQ] := Det[endpointJac[tt]];
+
+
+(* ================================================================*)
+(*5. Locate the first transverse zero*)
+(* ================================================================*)
+
+grid = N[Subdivide[1/100, P - 1/10000, 6000], wp];
+
+vals = detEnd /@ grid;
+
+crossings = 
+  Select[Partition[Transpose[{grid, vals}], 2, 
+    1], #[[1, 2]] #[[2, 2]] < 0 &];
+
+If[crossings === {}, Print["No sign-changing zero found."];
+  Abort[];];
+
+bracket = First[crossings][[All, 1]];
+
+tcon = t /. 
+   FindRoot[detEnd[t] == 0, {t, bracket[[1]], bracket[[2]]}, 
+    WorkingPrecision -> wp, AccuracyGoal -> 25, PrecisionGoal -> 25];
+
+
+(* ================================================================*)
+(*6. Output*)
+(* ================================================================*)
+
+Print["First conjugate time = ", N[tcon, 16]];
+Print["t_con/P = ", N[tcon/P, 16]];
+Print["P - t_con = ", N[P - tcon, 16]];
+
+Print["det J(t_con - .001) = ", N[detEnd[tcon - 1/1000], 14]];
+
+Print["det J(t_con + .001) = ", N[detEnd[tcon + 1/1000], 14]];
+
+Print["Singular values at t_con = ", 
+  N[SingularValueList[endpointJac[tcon]], 14]];
