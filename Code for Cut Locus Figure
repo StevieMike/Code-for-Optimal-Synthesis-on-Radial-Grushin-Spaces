@@ -1,0 +1,445 @@
+(*Code to Make the simulation of geodesics figure*)
+
+tol = 10^-10;
+
+MakePair[K_, w_] := 
+  Module[{L2 = 1 - K^2 - w^2}, If[L2 <= 0, Return[$Failed]];
+   {{Sqrt[L2], K, w}, {-Sqrt[L2], K, w}}];
+
+PiAlpha[alpha_] := Beta[1/(2 alpha), 1/2]/alpha;
+ClearAll[TurningRadii];
+
+TurningRadii[alpha_?NumericQ, {L_, K_, w_}] := 
+  Module[{kk = Abs[N[K]], ww = Abs[N[w]], rc, q, hi, rm, rp}, 
+   If[ww < tol, Return[{0., Infinity}]];
+   If[kk < tol, Return[{0., ww^(-1/alpha)}]];
+   q[r_?NumericQ] := 1 - kk^2/r^2 - ww^2 r^(2 alpha);
+   rc = (kk^2/(alpha ww^2))^(1/(2 alpha + 2));
+   (*Circular orbit*)If[Abs[q[rc]] < 10^-9, Return[{rc, rc}]];
+   hi = Max[2 rc, 2 ww^(-1/alpha), 2.];
+   While[q[hi] > 0, hi *= 2];
+   rm = r /. FindRoot[q[r] == 0, {r, rc 10^-6, rc}, Method -> "Brent"];
+   rp = r /. FindRoot[q[r] == 0, {r, rc, hi}, Method -> "Brent"];
+   {rm, rp}];
+ClearAll[PAlpha];
+
+PAlpha[alpha_?NumericQ, cov : {L_, K_, w_}] := 
+  Module[{kk = Abs[N[K]], ww = Abs[N[w]], rm, rp, d, q, qp, g}, 
+   If[ww < tol, Return[Infinity]];
+   If[kk < tol, Return[N[PiAlpha[alpha] ww^(-1/alpha)]]];
+   {rm, rp} = TurningRadii[alpha, cov];
+   (*Circular limiting radial period*)
+   If[Abs[rp - rm] < 10^-8, Return[N[2 Pi/Sqrt[2 alpha]]]];
+   d = rp - rm;
+   q[r_?NumericQ] := 1 - kk^2/r^2 - ww^2 r^(2 alpha);
+   qp[r_?NumericQ] := 2 kk^2/r^3 - 2 alpha ww^2 r^(2 alpha - 1);
+   g[u_?NumericQ] := 
+    Which[Abs[u] < 10^-8, 2 Sqrt[d/qp[rm]], Abs[u - Pi/2] < 10^-8, 
+     2 Sqrt[d/(-qp[rp])], True, 
+     With[{r = rm + d Sin[u]^2}, 2 d Sin[u] Cos[u]/Sqrt[Max[q[r], 0.]]]];
+   2 NIntegrate[g[u], {u, 0, Pi/2}, Method -> "LocalAdaptive", 
+     AccuracyGoal -> 10, PrecisionGoal -> 10]];
+ClearAll[GeodesicSolution];
+
+GeodesicSolution[alpha_?NumericQ, cov : {L_, K_, w_}] := 
+ Module[{ll = N[L], kk = N[K], ww = N[w], P, sol}, 
+  P = PAlpha[alpha, cov];
+  If[Abs[kk] < tol, 
+   sol = NDSolveValue[{x'[t] == px[t], 
+      px'[t] == -alpha ww^2 Abs[x[t]]^(2 alpha - 2) x[t], 
+      z'[t] == ww Abs[x[t]]^(2 alpha), x[0] == 1, px[0] == ll, 
+      z[0] == 0}, {x, px, z}, {t, 0, P}, MaxSteps -> Infinity];
+   <|"Period" -> P, 
+    "Position" -> Function[{tt}, {sol[[1]][tt], 0, sol[[3]][tt]}]|>, 
+   sol = NDSolveValue[{r'[t] == pr[t], 
+      pr'[t] == kk^2/r[t]^3 - alpha ww^2 r[t]^(2 alpha - 1), 
+      th'[t] == kk/r[t]^2, z'[t] == ww r[t]^(2 alpha), r[0] == 1, 
+      pr[0] == ll, th[0] == 0, z[0] == 0}, {r, pr, th, z}, {t, 0, P}, 
+     MaxSteps -> Infinity];
+   <|"Period" -> P, 
+    "Position" -> 
+     Function[{tt}, {sol[[1]][tt] Cos[sol[[3]][tt]], 
+       sol[[1]][tt] Sin[sol[[3]][tt]], sol[[4]][tt]}]|>]]
+ClearAll[GeodesicPlot];
+
+GeodesicPlot[alpha_?NumericQ, cov_, style_ : Directive[Blue, Thick]] :=
+   Module[{g, P, pos}, g = GeodesicSolution[alpha, cov];
+   P = g["Period"];
+   pos = g["Position"];
+   ParametricPlot3D[Evaluate[pos[t]], {t, 0, P}, PlotStyle -> style, 
+    PlotPoints -> 150, MaxRecursion -> 3, AxesLabel -> {"x", "y", "z"},
+     PlotRange -> All]];
+alpha0 = 2;
+
+families = {<|"Label" -> "generic 1", 
+    "Covectors" -> MakePair[1/4, 2/5]|>, <|"Label" -> "generic 2", 
+    "Covectors" -> MakePair[1/2, 1/3]|>, <|"Label" -> "generic 3", 
+    "Covectors" -> MakePair[1/3, 2/3]|>, <|
+    "Label" -> "K = 0, family 1", "Covectors" -> MakePair[0, 1/2]|>, <|
+    "Label" -> "K = 0, family 2", 
+    "Covectors" -> MakePair[0, 3/4]|>,(*Noncircular L=
+   0 example*)<|"Label" -> "L = 0", "Covectors" -> {{0, 4/5, 3/5}}|>};
+colors = Table[ColorData[97][j], {j, Length[families]}];
+
+ClearAll[FamilyPlot];
+
+FamilyPlot[alpha_, covectors_, color_] := 
+  Module[{data, curves, endpoint}, 
+   data = GeodesicSolution[alpha, #] & /@ covectors;
+   curves = 
+    MapIndexed[
+     Function[{g, j}, 
+      Module[{style, pos, P}, 
+       style = If[First[j] == 1, Directive[color, Thick], 
+         Directive[color, Thick, Dashed]];
+       pos = g["Position"];
+       P = g["Period"];
+       ParametricPlot3D[Evaluate[pos[t]], {t, 0, P}, 
+        PlotStyle -> style, PlotPoints -> 150, MaxRecursion -> 3, 
+        PlotRange -> All]]], data];
+   endpoint = With[{g = First[data]}, g["Position"][g["Period"]]];
+   Show[curves, Graphics3D[{color, PointSize[0.014], Point[endpoint]}]]];
+
+
+
+(* ============================================================*)(*FIN\
+AL CUT-LOCUS FIGURE*)(*Assumes everything through FamilyPlot has alrea\
+dy been run.*)(* ============================================================*)
+ClearAll[ScaledTurningRadii, ScaledOrbitData, aFun, bFun, pFun, 
+  omegaFun, zLow, zUp, zTop, TonguePatch, BoundaryCurve, 
+  CleanGeodesicPlot];
+
+alphaFig = 2;
+
+kappaC[alpha_] := Sqrt[alpha] (alpha + 1)^(-(alpha + 1)/(2 alpha));
+
+sC[alpha_] := (alpha + 1)^(-1/(2 alpha));
+
+omegaC[alpha_] := 2 Pi/Sqrt[2 (alpha + 1)];
+
+zCircular[alpha_] := 2 Pi/Sqrt[2 alpha (alpha + 1)];
+
+kc = N[kappaC[alphaFig]];
+sc = N[sC[alphaFig]];
+
+
+(*------------------------------------------------------------*)
+(*Scaled turning radii for*)
+(*Q_kappa(s)=1-kappa^2/s^2-s^(2 alpha).*)
+(*------------------------------------------------------------*)
+
+ScaledTurningRadii[alpha_?NumericQ, kap_?NumericQ] := 
+  Module[{k = N[kap], kcrit, scrit, q, rc, aa, bb}, 
+   kcrit = N[kappaC[alpha]];
+   scrit = N[sC[alpha]];
+   If[k <= 10^-12, Return[{0., 1.}]];
+   If[Abs[k - kcrit] <= 10^-10, Return[{scrit, scrit}]];
+   q[s_?NumericQ] := 1 - k^2/s^2 - s^(2 alpha);
+   rc = (k^2/alpha)^(1/(2 alpha + 2));
+   aa = s /. FindRoot[q[s] == 0, {s, k, rc}, Method -> "Brent"];
+   bb = s /. FindRoot[q[s] == 0, {s, rc, 1.}, Method -> "Brent"];
+   {aa, bb}];
+
+
+(*------------------------------------------------------------*)
+(*Scaled period p_alpha(kappa) and apsidal angle omega_alpha.*)
+(*Endpoint singularities are removed by s=a+(b-a) Sin[u]^2.*)
+(*------------------------------------------------------------*)
+
+ClearAll[ScaledOrbitData];
+
+ScaledOrbitData[alpha_?NumericQ, kap_?NumericQ] := 
+ Module[{k = N[kap], kcrit, scrit, aa, bb, s, q, L, K, w, cov, g, P, 
+   endpoint, om}, kcrit = N[kappaC[alpha]];
+  scrit = N[sC[alpha]];
+  (*K=0 limit*)
+  If[k <= 10^-10, 
+   Return[<|"a" -> 0., "b" -> 1., "p" -> N[PiAlpha[alpha]], 
+     "omega" -> N[Pi]|>]];
+  (*circular limit*)
+  If[Abs[k - kcrit] <= 10^-8, 
+   Return[<|"a" -> scrit, "b" -> scrit, 
+     "p" -> N[2 Pi scrit/Sqrt[2 alpha]], "omega" -> N[omegaC[alpha]]|>]];
+  {aa, bb} = ScaledTurningRadii[alpha, k];
+  (*Choose any interior scaled initial radius.*)s = (aa + bb)/2;
+  q = 1 - k^2/s^2 - s^(2 alpha);
+  w = s^alpha;
+  K = k/s;
+  L = Sqrt[Max[q, 0.]];
+  cov = {L, K, w};
+  (*Existing,already-tested machinery*)
+  g = GeodesicSolution[alpha, cov];
+  P = g["Period"];
+  (*Since s=w^(1/alpha),p_alpha=s P_alpha.*)
+  endpoint = g["Position"][P];
+  om = ArcTan[endpoint[[1]], endpoint[[2]]];
+  <|"a" -> aa, "b" -> bb, "p" -> N[s P], "omega" -> N[om]|>]
+
+
+(*------------------------------------------------------------*)
+(*Precompute and interpolate.*)
+(*This makes the actual 3D plotting fast and smooth.*)
+(*------------------------------------------------------------*)
+
+nGrid = 100;
+epsK = 10^-4;
+
+
+kappaGrid = 
+  Join[{0.}, Subdivide[epsK kc, (1 - epsK) kc, nGrid - 2], {kc}];
+orbitTable = ScaledOrbitData[alphaFig, #] & /@ kappaGrid;
+
+aFun = Interpolation[Transpose[{kappaGrid, Lookup[orbitTable, "a"]}], 
+   InterpolationOrder -> 3];
+
+bFun = Interpolation[Transpose[{kappaGrid, Lookup[orbitTable, "b"]}], 
+   InterpolationOrder -> 3];
+
+pFun = Interpolation[Transpose[{kappaGrid, Lookup[orbitTable, "p"]}], 
+   InterpolationOrder -> 3];
+
+omegaFun = 
+  Interpolation[Transpose[{kappaGrid, Lookup[orbitTable, "omega"]}], 
+   InterpolationOrder -> 3];
+
+
+(*------------------------------------------------------------*)
+(*Cut-locus height functions.*)
+(*s=b gives lower boundary;s=a gives upper boundary.*)
+(*------------------------------------------------------------*)
+
+zLow[k_?NumericQ] := pFun[k]/((alphaFig + 1) bFun[k]^(alphaFig + 1));
+
+zUp[k_?NumericQ] := pFun[k]/((alphaFig + 1) aFun[k]^(alphaFig + 1));
+
+
+(*Crop the infinite antipodal spine for the figure only.*)
+zMax = 3.25;
+
+zTop[k_?NumericQ] := If[k < 10^-8, zMax, Min[zUp[k], zMax]];
+
+
+(*------------------------------------------------------------*)
+(*Smooth cut-locus surfaces.*)
+(*signK reflects across the antipodal meridian.*)
+(*signZ reflects across z=0.*)
+(*------------------------------------------------------------*)
+
+cutStyle = Directive[RGBColor[0.32, 0.60, 0.82], Opacity[0.52]];
+
+boundaryStyle = Directive[GrayLevel[0.12], AbsoluteThickness[1.7]];
+
+
+TonguePatch[signK_Integer, signZ_Integer] := 
+  ParametricPlot3D[
+   Evaluate[{Cos[signK omegaFun[k]], Sin[signK omegaFun[k]], 
+     signZ ((1 - u) zLow[k] + u zTop[k])}], {k, 0, kc}, {u, 0, 1}, 
+   Mesh -> None, BoundaryStyle -> None, PlotStyle -> cutStyle, 
+   PlotPoints -> {75, 14}, MaxRecursion -> 1, 
+   PlotRange -> {{-1.15, 1.15}, {-1.15, 1.15}, {-zMax, zMax}}];
+
+
+(*------------------------------------------------------------*)
+(*Smooth true boundary curves.*)
+(*We truncate the unbounded upper branch at z=zMax.*)
+(*------------------------------------------------------------*)
+
+boundaryInset = 0.999;
+
+kUpperStart = 
+  k /. FindRoot[zUp[k] == boundaryInset zMax, {k, 10^-5 kc, kc}, 
+    Method -> "Brent"];
+
+
+BoundaryCurve["low", signK_Integer, signZ_Integer] := 
+  ParametricPlot3D[
+   Evaluate[{Cos[signK omegaFun[k]], Sin[signK omegaFun[k]], 
+     signZ zLow[k]}], {k, 0, kc}, PlotStyle -> boundaryStyle, 
+   PlotPoints -> 150, MaxRecursion -> 2];
+
+
+BoundaryCurve["up", signK_Integer, signZ_Integer] := 
+  ParametricPlot3D[
+   Evaluate[{Cos[signK omegaFun[k]], Sin[signK omegaFun[k]], 
+     signZ zUp[k]}], {k, kUpperStart, kc}, PlotStyle -> boundaryStyle,
+    PlotPoints -> 150, MaxRecursion -> 2];
+
+
+(*------------------------------------------------------------*)
+(*Antipodal spine K=0.*)
+(*------------------------------------------------------------*)
+
+zSpine = N[PiAlpha[alphaFig]/(alphaFig + 1)];
+
+spinePlot = 
+  Graphics3D[{Red, Dashed, Thickness[.00155], 
+    Line[{{-1, 0, zSpine}, {-1, 0, zMax}}], 
+    Line[{{-1, 0, -zSpine}, {-1, 0, -zMax}}]}];
+
+
+(*------------------------------------------------------------*)
+(*Faint reference cylinder r=1.*)
+(*------------------------------------------------------------*)
+
+cylinderPlot = 
+  ParametricPlot3D[{Cos[phi], Sin[phi], zz}, {phi, 0, 
+    2 Pi}, {zz, -zMax, zMax}, Mesh -> None, BoundaryStyle -> None, 
+   PlotStyle -> Directive[GrayLevel[0.7], Opacity[0.055]], 
+   PlotPoints -> {80, 10}];
+
+
+(*------------------------------------------------------------*)
+(*Clean geodesic plotting:no endpoint dots.*)
+(*------------------------------------------------------------*)
+
+CleanGeodesicPlot[cov_, style_] := 
+  Module[{g, per, pos}, g = GeodesicSolution[alphaFig, cov];
+   per = g["Period"];
+   pos = g["Position"];
+   ParametricPlot3D[Evaluate[pos[t]], {t, 0, per}, PlotStyle -> style,
+     PlotPoints -> 180, MaxRecursion -> 3, PlotRange -> All]];
+
+
+(* ============================================================*)
+(*THREE GEOMETRIC MECHANISMS*)
+(* ============================================================*)
+
+
+(*------------------------------------------------------------*)
+(*1. Generic Maxwell pair:L<->-L.*)
+(*Choose an interior point of the tongue.*)
+(*------------------------------------------------------------*)
+
+kGeneric = 0.60 kc;
+
+sGeneric = (aFun[kGeneric] + bFun[kGeneric])/2;
+
+KGeneric = kGeneric/sGeneric;
+wGeneric = sGeneric^alphaFig;
+
+genericPair = MakePair[KGeneric, wGeneric];
+
+genericPlot = 
+  Show[CleanGeodesicPlot[genericPair[[1]], 
+    Directive[RGBColor[0.78, 0.18, 0.16], AbsoluteThickness[3]]], 
+   CleanGeodesicPlot[genericPair[[2]], 
+    Directive[RGBColor[0.78, 0.18, 0.16], AbsoluteThickness[3], 
+     Dashed]]];
+kGeneric2 = 0.55 kc;
+
+sGeneric2 = (aFun[kGeneric2] + bFun[kGeneric2])/2;
+
+KGeneric2 = -kGeneric2/sGeneric2;
+wGeneric2 = sGeneric2^alphaFig;
+
+genericPair2 = MakePair[KGeneric2, wGeneric2];
+
+genericPlot2 = 
+  Show[CleanGeodesicPlot[genericPair2[[1]], 
+    Directive[RGBColor[0.72, 0.52, 0.08], AbsoluteThickness[3]]], 
+   CleanGeodesicPlot[genericPair2[[2]], 
+    Directive[RGBColor[0.72, 0.52, 0.08], AbsoluteThickness[3], 
+     Dashed]]];
+
+(*------------------------------------------------------------*)
+(*2. K=0 pair:endpoint lies on the antipodal spine.*)
+(*------------------------------------------------------------*)
+
+wSpine = 0.60;
+
+spinePair = MakePair[0, wSpine];
+
+spineGeodesics = 
+  Show[CleanGeodesicPlot[spinePair[[1]], 
+    Directive[RGBColor[0.14, 0.48, 0.20], AbsoluteThickness[2.1]]], 
+   CleanGeodesicPlot[spinePair[[2]], 
+    Directive[RGBColor[0.14, 0.48, 0.20], AbsoluteThickness[2.8], 
+     Dashed]]];
+
+
+(*------------------------------------------------------------*)
+(*3. L=0 boundary geodesic.*)
+(*Choose the LOWER conjugate boundary,s=b(kappa).*)
+(*------------------------------------------------------------*)
+
+kBoundary = 0.72 kc;
+sBoundary = bFun[kBoundary];
+
+KBoundary = kBoundary/sBoundary;
+wBoundary = sBoundary^alphaFig;
+
+boundaryCovector = {0, KBoundary, wBoundary};
+
+boundaryGeodesic = 
+  CleanGeodesicPlot[boundaryCovector, 
+   Directive[RGBColor[0.48, 0.16, 0.62], AbsoluteThickness[3]]];
+
+
+(*------------------------------------------------------------*)
+(*Base point q0=(1,0,0).*)
+(*One small marker is useful here;there are no cut-locus dots.*)
+(*------------------------------------------------------------*)
+
+basePoint = Graphics3D[{Black, Sphere[{1, 0, 0}, 0.035]}];
+
+
+(* ============================================================*)
+(*CUT LOCUS*)
+(* ============================================================*)
+
+cutLocusPlot = 
+  Show[TonguePatch[1, 1], TonguePatch[-1, 1], TonguePatch[1, -1], 
+   TonguePatch[-1, -1], BoundaryCurve["low", 1, 1], 
+   BoundaryCurve["up", 1, 1], BoundaryCurve["low", -1, 1], 
+   BoundaryCurve["up", -1, 1], BoundaryCurve["low", 1, -1], 
+   BoundaryCurve["up", 1, -1], BoundaryCurve["low", -1, -1], 
+   BoundaryCurve["up", -1, -1], spinePlot];
+
+
+(* ============================================================*)
+(*FINAL HERO FIGURE*)
+(* ============================================================*)
+
+heroFigure = 
+  Show[cylinderPlot, cutLocusPlot, genericPlot, genericPlot2, 
+   spineGeodesics, boundaryGeodesic, basePoint, Boxed -> False, 
+   Axes -> False, Lighting -> "Neutral", 
+   PlotRange -> {{-1.6, 1.6}, {-1.6, 1.6}, {-zMax, zMax}}, 
+   ViewPoint -> {2.35, -2.55, 1.65}, ViewVertical -> {0, 0, 1}, 
+   ImageSize -> 900];
+
+
+
+(* ============================================================*)(*LAB\
+ELS*)(* ============================================================*)
+ClearAll[mathTextStyle, annotationLayer, topBoundaryLabels];
+
+mathTextStyle[expr_, size_ : 20] := 
+  Style[TraditionalForm[expr], size, Black, FontFamily -> "Times"];
+
+annotationLayer = 
+  Graphics3D[{(*q0:larger,farther right and slightly down*)
+    Text[mathTextStyle[Subscript[q, 0], 22], {1.18, 
+      0.16, -0.08}],(*Cut(q0):placed off to the left*)
+    Text[mathTextStyle[HoldForm[Cut[Subscript[q, 0]]], 
+      28], {-1.52, -.75, 0}], GrayLevel[0.25], AbsoluteThickness[1.2],
+     Arrowheads[0.02],(*arrow to upper tongue*)
+    Arrow[{{-1.26, -.53, .15}, {-0.72, 0.08, 
+       1.25}}],(*arrow to lower tongue*)
+    Arrow[{{-1.26, -.53, -.15}, {-0.72, .08, -1.15}}]}];
+
+topBoundaryLabels = 
+  Graphics3D[{{Text[
+      Style[TraditionalForm[\[ScriptCapitalS]], 28, Black, 
+       FontFamily -> "Times"], {-0.66, -0.27, 3.52}], 
+     Text[Style[TraditionalForm[\[ScriptCapitalE]], 28, Black, 
+       FontFamily -> "Times"], {.1, -0.04, 3.58}]}, GrayLevel[0.25], 
+    AbsoluteThickness[1.2], Arrowheads[0.01],(*arrow to boundary*)
+    Arrow[{{-0.02, -0.04, 3.47}, {-0.45, 0.1, 3.08}}]}];
+
+heroFigureLabeled = 
+  Show[heroFigure, topBoundaryLabels, annotationLayer, Boxed -> False,
+    Axes -> False, SphericalRegion -> True, ImageSize -> 1000];
+
+heroFigureLabeled
+(*Export["Cut_Locus_Hero.pdf",heroFigureLabeled]*)
